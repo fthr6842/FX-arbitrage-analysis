@@ -1,0 +1,174 @@
+---
+title: "利差套利互動式頁面"
+author: "109071015 QF24 張晁維"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    toc: yes
+    fig_caption: yes
+    code_folding: hide
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format = "html")
+library(skimr)
+library(kableExtra) 
+library(tidyverse)
+library(stringr)
+library(lattice)
+library(ggradar)
+library(dplyr)
+library(sjPlot)
+```
+
+```{r echo=TRUE}
+data3 <- read.csv("Futures_Bond.csv")
+```
+
+```{r, echo=TRUE}
+CTA <- function(data3){
+  index <- colnames(data3)[2:11]
+  df <- data.frame(data3["Date"])
+  for(i in 1:3){
+    n0 <- str_sub(index[i], start=1, end=3)
+    d0 <- data3[, i+1]#目標國利率
+    for(j in 4:6){
+      if(str_sub(index[j], start=1, end=3)==n0){
+        d1 <- data3[, j+1]#目標貨幣匯率
+      }else if(str_sub(index[j], start=1, end=3)=="EUR" &
+               n0=="FRF"){
+        d1 <- data3[, j+1]#目標貨幣匯率(歐元區)
+      }
+    }
+    for(k in 7:9){
+      if(str_sub(index[k], start=1, end=3)==n0){
+        d2 <- data3[, k+1]#目標貨幣遠匯
+      }else if(str_sub(index[k], start=1, end=3)=="EUR" &
+               n0=="FRF"){
+        d2 <- data3[, k+1]#目標貨幣遠匯(歐元區)
+      }
+    }
+    d3 <- data3[, 11]#本國利率
+    dat0 <- d2/d1*exp(d0/12)
+    dat1 <- round(abs(dat0-exp(d3/12)), digits=4)
+    df <- cbind(df, dat1)
+  }
+  colnames(df) <- c("Date"
+                      , "USDtoCAD"
+                      , "USDtoEUR(FRF)"
+                      , "USDtoGBP")
+  return(df)
+}
+```
+
+```{r echo=TRUE}
+data4 <- CTA(data3)
+```
+
+
+
+# (i)互動式: 查詢特定日期之一月期期貨、公債殖利率收盤價與匯率現價
+
+#### F: futures; B: bonds
+
+```{r, echo=TRUE}
+#date2, country4
+inputPanel(
+  selectInput("date3", "Date: ", choices=data3["Date"])
+)
+renderTable({
+  subset(data3, Date==input$date3)
+})
+```
+
+# (ii)互動式: 查詢特定日期、特定目標國家之套利空間
+
+#### 注意: 對屬於歐元區之國家，以下債券數據採用該國債券、期貨數據則為歐元期貨
+
+```{r echo=TRUE}
+index <- colnames(data4)[2:4]
+inputPanel(
+  selectInput("date4", "Date: ", choices=data4["Date"]),
+  selectInput("country5", "Countries: ", choices=index)
+)
+renderTable({
+  subset(data4, Date==input$date4, select=input$country5)
+})
+renderTable({
+  subset(data4, Date==input$date4)
+})
+```
+
+# (iii)互動式: 套利空間分布視覺化
+
+```{r echo=TRUE}
+index <- colnames(data4)[2:4]
+inputPanel(
+  selectInput("country6", "Countries: ", choices=index)
+)
+renderPlot({
+  plot(subset(data4, select=input$country6)
+       , col=2
+       , main="Arbutrage Opportunity Distribution")
+})
+renderPlot({
+  boxplot(subset(data4, select=input$country6)
+          , horizontal=T
+          , main=input$country6)
+})
+```
+
+# (iv)互動式: 視覺化比較不同標的之套利空間
+
+```{r echo=TRUE}
+index <- colnames(data4)[2:4]
+inputPanel(
+  selectInput("country7", "Currency 1", choices=index),
+  selectInput("country8", "Currency 2", choices=rev(index))
+)
+renderPlot({
+  plot(subset(data4, select=input$country7)
+       , col=2
+       , xaxt='n')
+  par(new=T)
+  plot(subset(data4, select=input$country8)
+       , col=3
+       , main="Comparison: \nGreen: currency 1   Red: currency 2\n(Comparable as the denominators are the same)")
+})
+renderPlot({
+  datat2 <- data.frame(subset(data4, select=input$country7)
+                     , subset(data4, select=input$country8
+                              ))
+  boxplot(datat2, horizontal=T)
+})
+```
+
+# (v)互動式: 視覺化比較套利空間分布與Chi-square PDF
+
+#### PDF, Probability Density Function
+
+```{r echo=TRUE}
+#country: 9
+index <- colnames(data4)[2:4]
+inputPanel(
+  selectInput("country10", "Country: ", choices=index)
+)
+renderPlot({
+  boxplot(dchisq(seq(from=0, to=0.1, by=0.01)
+                 , df=1)*0.05
+          , horizontal = T)
+  par(new=T)
+  plot(subset(data4, select=input$country10)
+       , col=2
+       , main="Arbutrage Opportunity Distribution\nwith chisq(1)*0.05"
+       , xaxt='n'
+       , xlim=c(0, 0.2))
+})
+```
+
+
+
+
+

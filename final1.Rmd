@@ -1,0 +1,466 @@
+---
+title: "金融大數據期末報告: 外匯三角套利與利差套利分析"
+author: "作者: 109071015 QF24 張晁維"
+date: "日期: 2023-06-17"
+output: 
+  html_document: 
+    toc: yes
+    fig_caption: yes
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format = "html")
+library(skimr)
+library(kableExtra) 
+library(tidyverse)
+library(stringr)
+library(lattice)
+library(ggradar)
+library(dplyr)
+library(sjPlot)
+library(Hmisc)
+library(corrplot)
+```
+
+# 壹、研究主題
+
+#### 本主題旨在分析國際外匯市場中的主流貨幣間是否存在三角套利與利差套利空間，首先是將套利的判斷建模；其次是不同貨幣的套利組合與套利空間重分類的視覺化比較；第三是不同套利模式下，子群體之間的變異數分析(ANOVA)；另外在互動區中還有套利空間分布與常見機率分配函數，如Chi-square，的比較；最後以Shiny套件、rsconnect套件建構可互動、獨立於本HTML之操作介面，讓使用者可迅速、精確地獲取指定資訊，且可從網站shinyapps.io上操作互動式頁面。
+
+# 貳、研究動機
+
+#### 外匯交易的存在仰賴於持續變化、波動的外匯市場，這在固定匯率或是高度管理匯率的時代所不敢想像的，而其中所藏的套利空間更是為投資人所垂涎，我認為這正是它吸引人處，例如為世人所津津樂道的渡邊太太。學生在大二下學期時曾修習曾祺峰教授所開的國際財務管理一課，其中學到許多關於外匯的知識，因此藉這次的機會將許多繁雜的計算、判斷程式化，且使其適用於大數據的運算，而非僅止於單筆計算、判斷，並且加入與常見的機率分布的比較與視覺化的呈現，增強使用者在比較套利空間上的需求。
+
+# 參、研究目標
+
+#### (i) 建立適用於大數據計算、輸入數據僅需簡單預處理的函數
+
+#### (ii) 建立從不同視角下的視覺化比較
+
+#### (iii) 建立與常見機率分布的視覺化比較
+
+#### (iv) 建立分離、獨立的互動式工具
+
+# 肆、資料選擇與資料描述
+
+#### 本報告選擇的時間區間為2022全年(2022/01/01\~2022/12/31)，其中三角套利的部分採用的是日資料，共計260筆；利差套利採用的是週資料，共計53筆。全部的資料均來自investing.com。前者的資料採集條件為"兩個具有美金報價且具有其中任一貨幣報價資料"之貨幣，如日圓及英鎊均有美金報價之資料，且具有以日圓報價之英鎊資料，則可納入資料集中；後者的資料採集條件為"具有目標國一月期期貨、其貨幣一月期債券殖利率、美金報價之該國貨幣的資料"，其中對歐元區國家使用該國債券、歐元現價與期貨。
+
+# 伍、研究分析與結果
+
+## 1. 外匯三角套利
+
+![](images/螢幕擷取畫面 2023-06-21 092810.png)
+
+### (i)原理
+
+#### 利用兩貨幣對美元報價取餘數，再比較兩貨幣之直接報價。兩者差值越大即套利空間越大、越能彌補商業銀行的手續費、電報費或是其所在國所訂之外匯交易稅金。以下計算均採用該交易日之收盤價。
+
+### (ii)資料引入與整理: 2022/1/1 \~ 2022/12/31；頻率: 日；共計260筆資料。
+
+#### a.資料母群體
+
+```{r, echo=TRUE}
+data1 <- read.csv("FX_data.csv")
+
+kable(data1) %>% kable_styling() %>% scroll_box(height="150px")
+```
+
+#### b.資料基本描述
+
+```{r echo=TRUE}
+kable(skim(data1)) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+### (iii)範例: 英鎊(GBP)對日圓(JPY)三角套利計算
+
+```{r, echo=TRUE}
+dat1 <- data.frame(data1["GBP_USD"]/data1["JPY_USD"])
+colnames(dat1) <- c("Price")
+dat2 <- round(abs(dat1["Price"] - data1["GBP_JPY"])
+              , digits=4)
+dat2 <- cbind(data1["Date"], dat2)
+colnames(dat2) <- c("Date", "GBP_JPY")
+
+kable(dat2) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+```{r echo=TRUE}
+boxplot(subset(dat2, select="GBP_JPY")
+        , horizontal=T
+        , main="GBP_JPY")
+```
+
+### (iv)函式: 計算套利空間
+
+#### TA, Triangular Arbitrage
+
+```{r aa3, echo=TRUE}
+TA <- function(data1){
+  index <- colnames(data1)[2:10]
+  df <- data.frame(data1["Date"])
+  for(i in 1:5){
+    n0 <- str_sub(index[i], start=1, end=3)
+    n1 <- str_sub(index[i], start=5, end=7)
+    for(j in 6:9){
+      if(str_sub(index[j], start=1, end=3)==n0){
+        t0 <- as.numeric(data1[, j+1])
+      }else if(str_sub(index[j], start=1, end=3)==n1){
+        t1 <- as.numeric(data1[, j+1])
+      }
+    }
+    dat <- data.frame(round(abs(t0/t1-data1[, i+1])
+                            , digits=4))
+    df <- cbind(df, dat)
+  }
+  colnames(df) <- c("Date", index[1:5])
+  return(df)
+}
+```
+
+```{r aa4, echo=TRUE}
+data2 <- TA(data1)
+
+kable(data2) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+#### 註: 單位為後三位字元所代表的貨幣(Ex. GBP_JPY，單位為日圓)
+
+### (v)資料視覺化: 三角套利之套利空間分布
+
+#### a. 以散點圖與盒箱圖展示各貨幣組合之套利空間分布
+
+```{r echo=TRUE}
+boxplot(data2[2:6])
+```
+
+#### b. 以散點圖與盒箱圖展示部分較為離群之貨幣組合的套利空間分布
+
+```{r echo=TRUE}
+boxplot(data2[4:5])
+```
+
+### (vi)資料視覺化: 套利空間占比
+
+#### 先將套利空間以0, 0.001, 0.01, 0.1, 1分成四組，再進行不同形式的比較。
+
+```{r echo=TRUE}
+datatemp1 <- cut(data2[, 2]
+                , breaks=c(0, 0.001, 0.01, 0.1, 1)
+                , labels=c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+                , include.lowest=T)
+for(i in 3:6){
+  temp <- cut(data2[, i]
+                , breaks=c(0, 0.001, 0.01, 0.1, 1)
+                , labels=c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+                , include.lowest=T)
+  datatemp1 <- data.frame(datatemp1, temp)
+}
+colnames(datatemp1) <- colnames(data2)[2:6]
+```
+
+```{r echo=TRUE}
+datatemp2 <- data.frame()
+for(i in 1:5){
+  datatemp2 <- rbind(datatemp2, table(datatemp1[i])/260)
+}
+datatemp2 <- data.frame(datatemp2)
+datatemp2 <- cbind(colnames(data2)[2:6], datatemp2)
+row.names(datatemp2) <- 1:5
+colnames(datatemp2) <- c("combination", "0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+```
+
+#### a.雷達圖(ggradar)
+
+```{r echo=TRUE}
+datatemp2 %>% ggradar()
+```
+
+#### b.長條圖(Bar chart)
+
+```{r echo=TRUE}
+temp <- table(datatemp1[, 1])
+for(i in 2:5){
+  temp <- rbind(temp, table(datatemp1[, i]))
+}
+row.names(temp) <- colnames(data2)[2:6]
+```
+
+```{r echo=TRUE}
+temp %>% barplot(beside = T
+                 , legend.text = rownames(.)
+                 , col = palette("Set 3")[2:6] %>% alpha(0.6))
+```
+
+#### c.熱量圖(Heat map)
+
+```{r echo=TRUE}
+datatemp3 <- data.frame()
+for(i in 1:5){
+  datatemp3 <- rbind(datatemp3, table(datatemp1[i])/260)
+}
+datatemp3 <- data.frame(datatemp3)
+colnames(datatemp3) <- c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+rownames(datatemp3) <- colnames(data2)[2:6]
+```
+
+```{r echo=TRUE}
+corrplot(cor(datatemp3), method = 'color', order = 'alphabet')
+```
+
+### (vii)資料分析: 各貨幣組合套利空間之One-Way ANOVA
+
+```{r}
+fit <- lm(GBP_JPY~GBP_TWD+GBP_EUR+TWD_JPY+EUR_JPY, data=data2)
+fit <- anova(fit)
+kable(fit, "pipe", align = "cccc")
+```
+
+### (viii)互動式頁面
+
+### <https://6842studio.shinyapps.io/final2/>
+
+#### (建議按右鍵以開啟新分頁)
+
+## 2. 外匯利差套利
+
+### (i)原理
+
+![](images/螢幕擷取畫面 2023-06-21 091547.png){width="374"}
+
+#### 在連續複利計算的假設下，任兩國之利率差取自然數應等於目標國貨幣期貨、遠匯除以匯率現價。若存在差值，則同時買或賣貨幣並定存、賣或買期貨(遠匯)。兩者差值越大即套利空間越大、越能彌補商業銀行的手續費、電報費或是其所在國所訂之外匯交易稅金。以下計算均採用該交易日之收盤價，資料選用一月期之債券與期貨。
+
+#### \*隱含假設:
+
+#### a. 以美元作為母國貨幣。
+
+#### b. 連續複利假設。
+
+#### c. 所選債券與定存於該國均為無風險
+
+### (ii)資料引入與整理: 2022/1/1 \~ 2022/12/31；頻率: 週；共計53筆資料。
+
+#### a.資料母群體
+
+```{r, echo=TRUE}
+data3 <- read.csv("Futures_Bond.csv")
+
+kable(data3) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+#### b.資料基本描述
+
+```{r echo=TRUE}
+kable(skim(data3)) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+### (iii)範例: 美元對加幣利差套利
+
+```{r, echo=TRUE}
+dat31 <- data3["CADF"]/data3["CAD_USD"]*exp(data3["CADB"]/12)
+dat4 <- round(abs(dat31-exp(data3["USDB"]/12)), digits=4)
+dat4 <- cbind(data3["Date"], dat4)
+colnames(dat4) <- c("Date", "USDtoCAD")
+
+kable(dat4) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+```{r echo=TRUE}
+boxplot(subset(dat4, select="USDtoCAD")
+        , horizontal=T
+        , main="USDtoCAD")
+```
+
+### (iv)函式: 計算套利空間
+
+#### CT, Carry Trade Arbitrage
+
+```{r, echo=TRUE}
+CTA <- function(data3){
+  index <- colnames(data3)[2:11]
+  df <- data.frame(data3["Date"])
+  for(i in 1:3){
+    n0 <- str_sub(index[i], start=1, end=3)
+    d0 <- data3[, i+1]#目標國利率
+    for(j in 4:6){
+      if(str_sub(index[j], start=1, end=3)==n0){
+        d1 <- data3[, j+1]#目標貨幣匯率
+      }else if(str_sub(index[j], start=1, end=3)=="EUR" &
+               n0=="FRF"){
+        d1 <- data3[, j+1]#目標貨幣匯率(歐元區)
+      }
+    }
+    for(k in 7:9){
+      if(str_sub(index[k], start=1, end=3)==n0){
+        d2 <- data3[, k+1]#目標貨幣遠匯
+      }else if(str_sub(index[k], start=1, end=3)=="EUR" &
+               n0=="FRF"){
+        d2 <- data3[, k+1]#目標貨幣遠匯(歐元區)
+      }
+    }
+    d3 <- data3[, 11]#本國利率
+    dat0 <- d2/d1*exp(d0/12)
+    dat1 <- round(abs(dat0-exp(d3/12)), digits=4)
+    df <- cbind(df, dat1)
+  }
+  colnames(df) <- c("Date"
+                      , "USDtoCAD"
+                      , "USDtoEUR_FRF"
+                      , "USDtoGBP")
+  return(df)
+}
+```
+
+```{r, echo=TRUE}
+data4 <- CTA(data3)
+
+kable(data4) %>% kable_styling() %>% scroll_box(height="100px")
+```
+
+#### 註: 以上單位均為美元(USD)
+
+### (v)資料視覺化: 利差套利之套利空間分布
+
+#### a. 以盒箱圖展示各國與美元組合之套利空間分布
+
+```{r echo=TRUE}
+boxplot(data4[2:4])
+```
+
+#### b. 以盒箱圖展示部分較為離群之組合的套利空間分布
+
+```{r echo=TRUE}
+datatemp13 <- data.frame(USDtoCAD=data4[, 2]
+                        , USDtoGBP=data4[, 4])
+boxplot(datatemp13)
+```
+
+#### 註: 單位為後三位字元所代表的貨幣(Ex. GBP_JPY，單位為日圓)
+
+### (vi)資料視覺化: 套利空間占比
+
+#### 先將套利空間以0, 0.001, 0.01, 0.1, 1分成四組，再進行不同形式的比較。
+
+```{r echo=TRUE}
+datatemp11 <- cut(data4[, 2]
+                , breaks=c(0, 0.001, 0.01, 0.1, 1)
+                , labels=c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+                , include.lowest=T)
+for(i in 3:4){
+  temp <- cut(data4[, i]
+                , breaks=c(0, 0.001, 0.01, 0.1, 1)
+                , labels=c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+                , include.lowest=T)
+  datatemp11 <- data.frame(datatemp11, temp)
+}
+colnames(datatemp11) <- colnames(data4)[2:4]
+```
+
+```{r echo=TRUE}
+datatemp12 <- table(datatemp11[1])/53
+for(i in 2:3){
+  datatemp12 <- rbind(datatemp12, table(datatemp11[i])/53)
+}
+datatemp12 <- data.frame(datatemp12)
+datatemp12 <- cbind(colnames(data4)[2:4], datatemp12)
+row.names(datatemp12) <- 1:3
+colnames(datatemp12) <- c("combination", "0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+```
+
+#### a.雷達圖(ggradar)
+
+```{r echo=TRUE}
+datatemp12 %>% ggradar()
+```
+
+#### b.長條圖(Bar chart)
+
+```{r echo=TRUE}
+temp1 <- table(datatemp11[, 1])
+for(i in 2:3){
+  temp1 <- rbind(temp1, table(datatemp11[, i]))
+}
+row.names(temp1) <- colnames(data4)[2:4]
+```
+
+```{r}
+temp1 %>% barplot(beside = T
+                 , legend.text = rownames(.)
+                 , col = palette("Set 3")[2:4] %>% alpha(0.6))
+```
+
+#### c.熱量圖(Heat map)
+
+```{r echo=TRUE}
+datatemp13 <- table(datatemp11[1])/53
+for(i in 2:3){
+  datatemp13 <- rbind(datatemp13, table(datatemp11[i])/53)
+}
+datatemp13 <- data.frame(datatemp13)
+row.names(datatemp13) <- colnames(data4)[2:4]
+colnames(datatemp13) <- c("0~0.001", "0.001~0.01", "0.01~0.1", "0.1~1")
+```
+
+```{r echo=TRUE}
+corrplot(cor(datatemp13), method = 'color', order = 'alphabet')
+```
+
+### (vii)資料分析: 各國與美元組合套利空間之One-Way ANOVA
+
+```{r echo=TRUE}
+fit1 <- lm(USDtoCAD~USDtoEUR_FRF+USDtoGBP, data=data4)
+fit1 <- anova(fit1)
+kable(fit1, "pipe", align = "cccc")
+```
+
+### (viii)互動式頁面
+
+### <https://6842studio.shinyapps.io/final3/>
+
+#### (建議按右鍵以開啟新分頁)
+
+# 陸、結論
+
+### (i)套利空間分布描述
+
+#### 從上述結果可見，以子群體與個別樣本點而言，利差套利的最高值、最高子群體於三角套利者。三角套利的套利空間主要分布在0\~0.075，其中有部分離群值可達0.2；利差套利的套利空間主要分布在0\~0.15，其中美元對歐元(法國債券)明顯高出其他子群體，其主要分布在0.15\~0.4。
+
+### (ii)資料重分群後的套利空間分布描述
+
+#### 我將資料值重新分類至0\~0.001、0.001\~0.01、0.01\~0.1、0.1\~1四個區間，從雷達圖上可清楚見到不論三角套利或是利差套利，多數套利組合的圖形多呈現尾部較尖的風箏形，意即對給定的套利組合，其套利空間分布高度集中於一個區間。這項特性在長條圖中也有所體現。在熱量圖中可見不同套利空間組合之共變異係數，可見整體而言，利差套利之套利空間大於三角套利之套利空間。
+
+### (iii) ANOVA分析
+
+#### 變異數分析的目的在於比較不同子群體的均值是否在統計檢定下相同。在三角套利下，設比較對象為英鎊與日幣的組合(GBP_JPY)，其餘子群體的p-value均低於0.05，代表子群體之均值不同；在利差套利下，設比較對象為美元對加幣的組合(USDtoCAD)，其餘子群體的p-value均不低於0.05，代表子群體之均值相同。
+
+# 柒、指定問題
+
+### (i)Where you get your project ideas?
+
+#### 學生在大二下時決定輔修本校經濟學系，修課計畫隨之變更，加上當時想要挑戰自我，因此在尚未修習衍生性金融商品與衍生性商品訂價的情況下選修本系曾祺峰教授所開授之國際財務管理。在這門課上學到許多外匯的知識，其中最吸引我的題材即是外匯套利。然而當時曾教授提及此處時，多次提及套利機會的出現都是一閃即逝，一經出現，馬上就會被敏銳的投機者以大量下單所導致的供需改變而填平，這激發了我想要建立快速計算多筆貨幣、期貨和利率組合下之套利空間的程式工具。
+
+### (ii)How many new packages and functions are used?(other than those from PresTree lecture notes)
+
+#### a. shiny: 用於建立互動式頁面
+
+#### b. rsconnect: 用於將shiny互動式頁面發布至shinyapps.io，可更彈性地使用互動式頁面、不用開啟本報告即可使用與分析。
+
+#### c. ggradar: 繪製雷達圖
+
+### (iii)What is the most difficult part of your analysis?
+
+#### 我認為完成這份報告最難的部分是建立處理三角套利計算與利差套利計算的函數。因為這涉及到對資料結構、位置的精確認知與對所有可能情況的掌握。如計算利差套利時，就要特別考量到歐元區國家使用的是歐元、利率則是採用該國所發行之債券。另外在找尋利差套利的資料時，資料收集也是一大難題。基於尋求較為廣泛的條件，因此我只尋找一年有12期的期貨外匯期貨、而排除掉一年4期者；利率亦同，僅納入有一月期者。
+
+# 捌、參考資料
+
+### (i)International Financial Management, 13e
+
+#### ISBN：9789869508216
+
+### (ii)外匯套利
+
+#### ISBN : 9789866320293
+
+# 玖、報告原始碼與所有資料
+
+### <https://drive.google.com/drive/folders/1aKWVPqnqEFaoq5VLCDqTLqTYCaWyrYdS?usp=drive_link>
